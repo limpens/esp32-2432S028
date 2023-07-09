@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,9 @@
 static SemaphoreHandle_t xGuiSemaphore = NULL;
 static TaskHandle_t g_lvgl_task_handle;
 
+void lvgl_acquire(void);
+void lvgl_release(void);
+
 //
 // just for demo, should use ledc_channel to pwm the led
 //
@@ -44,6 +48,7 @@ static bool lvgl_notify_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_
 {
     lv_disp_drv_t *disp_driver = (lv_disp_drv_t *)user_ctx;
     lv_disp_flush_ready(disp_driver);
+
     return false;
 }
 
@@ -78,7 +83,7 @@ esp_lcd_panel_handle_t InitDisplay(lv_disp_drv_t *disp_drv)
         .max_transfer_sz = CONFIG_LCD_BUF_SIZE * sizeof(uint16_t),
         .flags = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
         .isr_cpu_id = INTR_CPU_ID_AUTO,
-        .intr_flags = 0 };
+        .intr_flags = ESP_INTR_FLAG_LOWMED | ESP_INTR_FLAG_IRAM };
 
     const esp_lcd_panel_dev_config_t lcd_panel_devcfg
         = { .reset_gpio_num = GPIO_NUM_NC, .rgb_endian = LCD_RGB_ENDIAN_RGB, .bits_per_pixel = 16, .flags = { .reset_active_high = 0 }, .vendor_config = nullptr };
@@ -184,8 +189,10 @@ static void lcd_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_colo
     int offsety1 = area->y1;
     int offsety2 = area->y2;
 
+    lvgl_acquire();
     esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
     lv_disp_flush_ready(drv);
+    lvgl_release();
 }
 
 //
@@ -295,47 +302,67 @@ void lvUpdateTask(void *ptr)
     }
 }
 
-void lvSetupScreen(void)
+uint8_t lvSetupScreen(lv_obj_t **obj_array)
 {
+    uint8_t n = 0;
+
     lvgl_acquire();
 
     lv_obj_t *screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), LV_STATE_DEFAULT);
 
-    lv_obj_t *label = lv_label_create(screen);
-    lv_obj_set_style_text_color(label, LV_COLOR_MAKE16(0xd2, 0xe3, 0x36), LV_STATE_DEFAULT);
-    lv_obj_set_align(label, LV_ALIGN_CENTER);
-    lv_label_set_text(label, "Hello LVGL World!");
-    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(label, ui_event_Screen, LV_EVENT_ALL, nullptr);
+    /*
+        lv_obj_t *label = lv_label_create(screen);
+        lv_obj_set_style_text_color(label, LV_COLOR_MAKE16(0xd2, 0xe3, 0x36), LV_STATE_DEFAULT);
+        lv_obj_set_align(label, LV_ALIGN_CENTER);
+        lv_label_set_text(label, "Hello LVGL World!");
+        lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(label, ui_event_Screen, LV_EVENT_ALL, nullptr);
+    */
+
+    lv_obj_t *lblText = lv_label_create(screen);
+    lv_obj_set_style_text_color(lblText, LV_COLOR_MAKE16(20, 238, 231), LV_STATE_DEFAULT);
+    lv_obj_set_align(lblText, LV_ALIGN_CENTER);
+    lv_label_set_text(lblText, "");
+    obj_array[n++] = lblText;
 
     lv_obj_t *lblRed = lv_label_create(screen);
     lv_obj_set_style_text_color(lblRed, LV_COLOR_MAKE16(0xff, 0x00, 0x00), LV_STATE_DEFAULT);
     lv_obj_set_align(lblRed, LV_ALIGN_TOP_LEFT);
     lv_label_set_text(lblRed, "RED");
+    obj_array[n++] = lblRed;
 
     lv_obj_t *lblGreen = lv_label_create(screen);
     lv_obj_set_style_text_color(lblGreen, LV_COLOR_MAKE16(0x00, 0xff, 0x00), LV_STATE_DEFAULT);
     lv_obj_set_align(lblGreen, LV_ALIGN_TOP_RIGHT);
     lv_label_set_text(lblGreen, "GREEN");
+    obj_array[n++] = lblGreen;
 
     lv_obj_t *lblBlue = lv_label_create(screen);
     lv_obj_set_style_text_color(lblBlue, LV_COLOR_MAKE16(0x00, 0x00, 0xff), LV_STATE_DEFAULT);
     lv_obj_set_align(lblBlue, LV_ALIGN_BOTTOM_LEFT);
     lv_label_set_text(lblBlue, "BLUE");
+    obj_array[n++] = lblBlue;
 
     lv_obj_t *lblWhite = lv_label_create(screen);
     lv_obj_set_style_text_color(lblWhite, LV_COLOR_MAKE16(0xff, 0xff, 0xff), LV_STATE_DEFAULT);
     lv_obj_set_align(lblWhite, LV_ALIGN_BOTTOM_RIGHT);
     lv_label_set_text(lblWhite, "WHITE");
+    obj_array[n++] = lblWhite;
 
     lv_disp_load_scr(screen);
 
     lvgl_release();
+
+    return n;
 }
 
 void TaskDisplay(void *)
 {
+    char buf[32];
+    lv_obj_t *Labels[8];
+    uint8_t NrLabels;
+
     static lv_disp_drv_t disp_drv;
     InitBacklight();
 
@@ -344,16 +371,29 @@ void TaskDisplay(void *)
 
     xGuiSemaphore = xSemaphoreCreateMutex();
     InitLVGL(display, touchpanel, &disp_drv);
-    lvSetupScreen();
+    NrLabels = lvSetupScreen(Labels);
 
-    xTaskCreatePinnedToCore(&lvUpdateTask, "lv_update", 8192, nullptr, tskIDLE_PRIORITY, &g_lvgl_task_handle, 1);
+    xTaskCreatePinnedToCore(&lvUpdateTask, "lv_update", 8192, nullptr, 6, &g_lvgl_task_handle, 1);
+    uint32_t n = 0;
+    while (42)
+    {
+        n++;
+        sprintf(buf, "%" PRIu32, n);
 
-    vTaskDelay(portMAX_DELAY);
+        lvgl_acquire();
+
+        for (uint8_t i = 0; i < NrLabels; i++)
+            lv_label_set_text(Labels[i], buf);
+
+        lvgl_release();
+
+        vTaskDelay(125 / portTICK_PERIOD_MS);
+    }
 }
 
 extern "C" void app_main(void)
 {
-    xTaskCreate(TaskDisplay, "Display", 6 * configMINIMAL_STACK_SIZE, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(TaskDisplay, "Display", 6 * configMINIMAL_STACK_SIZE, NULL, 5, NULL, 1);
 
     vTaskDelay(portMAX_DELAY);
 }
