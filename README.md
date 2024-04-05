@@ -1,3 +1,6 @@
+**See https://github.com/limpens/esp32-2432S028R for a version utilizing the new esp_lvgl_port.**
+
+
 # ESP32-2432S028
 
 Basic example using esp-idf components on a [Sunton 2432S028 board](https://nl.aliexpress.com/item/1005004502250619.html).
